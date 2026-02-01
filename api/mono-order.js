@@ -52,31 +52,44 @@ module.exports = async (req, res) => {
       return;
     }
 
-    // Mono очікує price = ціна за ОДИНИЦЮ (за 1 шт.), cnt = кількість
-    const totalAmount = Math.round(Number(amount) * 100) / 100;
-    const monoProducts = products.map((p) => {
-      const qty = Number(p.quantity) || 1;
+    // Формуємо товари: price = ціна за одиницю (грн), cnt = кількість
+    const totalAmountUAH = Math.round(Number(amount) * 100) / 100;
+    const monoProducts = products.map((p, idx) => {
+      const qty = Math.max(1, Math.floor(Number(p.quantity) || 1));
       const lineTotal = Number(p.price) != null ? Number(p.price) : 0;
-      const unitPrice = qty > 0 ? Math.round((lineTotal / qty) * 100) / 100 : 0;
+      const unitPriceUAH = qty > 0 ? Math.round((lineTotal / qty) * 100) / 100 : 0;
+      const codeProduct = p.id != null && p.id !== '' ? String(p.id) : String(idx + 1);
       return {
-        name: String(p.name || ''),
+        name: String(p.name || 'Товар').slice(0, 256),
         cnt: qty,
-        price: unitPrice,
-        code_product: p.id != null ? String(p.id) : ''
+        price: unitPriceUAH,
+        code_product: codeProduct
       };
     });
 
+    const totalQuantity = monoProducts.reduce((sum, p) => sum + p.cnt, 0);
+
+    // Mono відхиляє non-HTTPS — підставляємо HTTPS продакшн для return_url
+    const siteUrl = (process.env.SITE_URL || 'https://tutsi-shop.com.ua').replace(/\/$/, '');
+    const returnUrlIsInvalid = !return_url || !/^https:\/\//i.test(return_url) || /localhost|127\.0\.0\.1/i.test(return_url);
+    const pathPart = return_url ? (return_url.replace(/^https?:\/\/[^/]+/i, '') || '/index.html') : '/index.html';
+    const safeReturnUrl = returnUrlIsInvalid ? (siteUrl + (pathPart.startsWith('/') ? pathPart : '/' + pathPart)) : return_url;
+    const safeCallbackUrl = (callback_url && /^https:\/\//i.test(callback_url)) ? callback_url : `${siteUrl}/api/mono-callback`;
+
+    // Тіло як у документації Mono: amount і price — числа (грн). Деякі API приймають тільки цілі.
     const monoBody = {
-      order_ref,
-      amount: totalAmount,
+      order_ref: String(order_ref),
+      amount: Number(totalAmountUAH),
       ccy: 980,
-      count: products.length,
-      products: monoProducts,
+      count: monoProducts.length,
+      products: monoProducts.map((p) => ({ ...p, price: Number(p.price) })),
       dlv_method_list: ['np_brnm'],
       payment_method_list: ['card'],
-      callback_url: callback_url || `${req.headers.origin || ''}/mono-callback.html`,
-      return_url
+      callback_url: safeCallbackUrl,
+      return_url: safeReturnUrl
     };
+
+    console.log('Mono request body:', JSON.stringify(monoBody, null, 2));
 
     const response = await fetch('https://api.monobank.ua/personal/checkout/order', {
       method: 'POST',
@@ -90,10 +103,11 @@ module.exports = async (req, res) => {
     const data = await response.json();
 
     if (!response.ok) {
-      const errMsg = data.errorDescription || data.message || data.errCode || (typeof data === 'string' ? data : 'Mono API error');
-      console.error('Mono API error:', response.status, data);
+      const errMsg = data.errorDescription || data.message || data.errCode || (typeof data === 'object' ? JSON.stringify(data) : data) || 'Mono API error';
+      console.error('Mono API error:', response.status, JSON.stringify(data));
       res.status(response.status).json({
-        error: errMsg
+        error: errMsg,
+        hint: 'Перевір у web.monobank.ua → Інтернет → Еквайринг: дозволені домени та URL для return_url/callback_url.'
       });
       return;
     }
