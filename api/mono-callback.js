@@ -2,13 +2,9 @@
  * Webhook від Monobank: після успішної оплати Mono викликає цей URL (POST).
  * Тут надсилаємо підтвердження в Telegram.
  *
- * Налаштування на Vercel (Environment Variables):
- * - MONO_TOKEN (вже є для mono-order)
+ * На Vercel додай Environment Variables:
  * - TELEGRAM_BOT_TOKEN — токен бота (@BotFather)
- * - TELEGRAM_CHAT_ID — ID чату, куди слати повідомлення
- *
- * У script.js callback_url має вказувати на цей ендпоінт, наприклад:
- * https://твій-проєкт.vercel.app/api/mono-callback
+ * - TELEGRAM_CHAT_ID — ID чату для повідомлень
  */
 
 module.exports = async (req, res) => {
@@ -27,7 +23,6 @@ module.exports = async (req, res) => {
     const amount = body.amount != null ? body.amount / 100 : (body.finalAmount != null ? body.finalAmount / 100 : 0);
     const invoiceId = body.invoiceId || '';
 
-    // Успішна оплата: status може бути "success" або "completed"
     const isSuccess = status === 'success' || status === 'completed' || status === 'done';
 
     if (!isSuccess) {
@@ -62,6 +57,5 @@ module.exports = async (req, res) => {
     console.error('mono-callback error:', e);
   }
 
-  // Завжди повертаємо 200, щоб Mono не повторював запит
   res.status(200).end();
 };

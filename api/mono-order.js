@@ -52,17 +52,26 @@ module.exports = async (req, res) => {
       return;
     }
 
+    // Mono очікує price = ціна за ОДИНИЦЮ (за 1 шт.), cnt = кількість
+    const totalAmount = Math.round(Number(amount) * 100) / 100;
+    const monoProducts = products.map((p) => {
+      const qty = Number(p.quantity) || 1;
+      const lineTotal = Number(p.price) != null ? Number(p.price) : 0;
+      const unitPrice = qty > 0 ? Math.round((lineTotal / qty) * 100) / 100 : 0;
+      return {
+        name: String(p.name || ''),
+        cnt: qty,
+        price: unitPrice,
+        code_product: p.id != null ? String(p.id) : ''
+      };
+    });
+
     const monoBody = {
       order_ref,
-      amount: Math.round(amount * 100) / 100,
+      amount: totalAmount,
       ccy: 980,
       count: products.length,
-      products: products.map((p) => ({
-        name: p.name,
-        cnt: p.quantity,
-        price: p.price,
-        code_product: p.id || String(p.id)
-      })),
+      products: monoProducts,
       dlv_method_list: ['np_brnm'],
       payment_method_list: ['card'],
       callback_url: callback_url || `${req.headers.origin || ''}/mono-callback.html`,
@@ -81,8 +90,10 @@ module.exports = async (req, res) => {
     const data = await response.json();
 
     if (!response.ok) {
+      const errMsg = data.errorDescription || data.message || data.errCode || (typeof data === 'string' ? data : 'Mono API error');
+      console.error('Mono API error:', response.status, data);
       res.status(response.status).json({
-        error: data.errorDescription || data.message || 'Mono API error'
+        error: errMsg
       });
       return;
     }
