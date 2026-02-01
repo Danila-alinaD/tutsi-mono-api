@@ -19,7 +19,7 @@ module.exports = async (req, res) => {
   try {
     const body = typeof req.body === 'string' ? JSON.parse(req.body) : req.body || {};
     const status = (body.status || '').toLowerCase();
-    const reference = body.reference || body.order_ref || body.invoiceId || '';
+    const referenceRaw = body.reference || body.order_ref || body.invoiceId || '';
     const amount = body.amount != null ? body.amount / 100 : (body.finalAmount != null ? body.finalAmount / 100 : 0);
     const invoiceId = body.invoiceId || '';
 
@@ -36,11 +36,41 @@ module.exports = async (req, res) => {
       return;
     }
 
+    let orderData = null;
+    try {
+      const base64 = referenceRaw.replace(/-/g, '+').replace(/_/g, '/');
+      const padded = base64 + '='.repeat((4 - (base64.length % 4)) % 4);
+      const json = Buffer.from(padded, 'base64').toString('utf8');
+      orderData = JSON.parse(json);
+    } catch (_) {}
+
     const amountStr = amount ? `${Number(amount).toFixed(2)} ₴` : '';
-    let message = `✅ <b>Оплата через Mono здійснена</b>\n\n`;
-    if (reference) message += `📋 Замовлення: <code>${reference}</code>\n`;
+    let message = `✅ <b>Оплата через Mono — оплачено</b>\n\n`;
+    if (orderData && orderData.id) message += `📋 Замовлення: <code>${orderData.id}</code>\n`;
+    else if (referenceRaw) message += `📋 Замовлення: <code>${referenceRaw}</code>\n`;
     if (amountStr) message += `💰 Сума: ${amountStr}\n`;
-    if (invoiceId) message += `🆔 InvoiceId: ${invoiceId}\n`;
+
+    if (orderData) {
+      if (orderData.n || orderData.s || orderData.p) {
+        message += `\n👤 <b>Отримувач:</b>\n`;
+        if (orderData.n || orderData.s) message += `${(orderData.n || '').trim()} ${(orderData.s || '').trim()}\n`.trim() + '\n';
+        if (orderData.p) message += `📞 ${orderData.p}\n`;
+      }
+      if (orderData.c || orderData.w) {
+        message += `\n📍 <b>Доставка:</b>\n`;
+        if (orderData.c) message += `Місто: ${orderData.c}\n`;
+        if (orderData.r) message += `Область: ${orderData.r}\n`;
+        if (orderData.w) message += `Відділення: ${orderData.w}\n`;
+      }
+      if (orderData.items && orderData.items.length) {
+        message += `\n🛒 <b>Товари:</b>\n`;
+        orderData.items.forEach(i => {
+          message += `• ${i.n} x${i.q} — ${Number(i.pr).toFixed(2)} ₴\n`;
+        });
+      }
+    }
+
+    if (invoiceId) message += `\n🆔 InvoiceId: ${invoiceId}\n`;
     message += `\n📅 ${new Date().toLocaleString('uk-UA', { dateStyle: 'medium', timeStyle: 'short' })}`;
 
     const apiUrl = `https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`;

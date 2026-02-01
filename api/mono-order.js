@@ -37,6 +37,12 @@ module.exports = async (req, res) => {
     const {
       order_ref,
       amount,
+      name,
+      surname,
+      phone,
+      city,
+      region,
+      warehouse,
       products,
       return_url,
       callback_url
@@ -61,7 +67,23 @@ module.exports = async (req, res) => {
     const redirectUrl = returnUrlIsInvalid ? (siteUrl + (pathPart.startsWith('/') ? pathPart : '/' + pathPart)) : return_url;
     const webHookUrl = (callback_url && /^https:\/\//i.test(callback_url)) ? callback_url : `${siteUrl}/api/mono-callback`;
 
-    // Згідно документації: amount (копійки), ccy, redirectUrl, webHookUrl
+    const items = (products && Array.isArray(products)) ? products.map(p => ({
+      n: String(p.name || 'Товар').slice(0, 120),
+      q: Math.max(1, parseInt(p.quantity, 10) || 1),
+      pr: Number(p.price) != null ? Number(p.price) : 0
+    })) : [];
+    const orderData = {
+      id: String(order_ref),
+      n: String(name || '').slice(0, 80),
+      s: String(surname || '').slice(0, 80),
+      p: String(phone || '').slice(0, 30),
+      c: String(city || '').slice(0, 100),
+      r: String(region || '').slice(0, 100),
+      w: String(warehouse || '').slice(0, 200),
+      items
+    };
+    const referenceEncoded = Buffer.from(JSON.stringify(orderData), 'utf8').toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+
     const monoBody = {
       amount: amountKop,
       ccy: 980,
@@ -71,16 +93,11 @@ module.exports = async (req, res) => {
       paymentType: 'debit'
     };
 
-    // merchantPaymInfo — опційно, для відображення на сторінці оплати (reference, destination)
-    if (order_ref) {
-      monoBody.merchantPaymInfo = {
-        reference: String(order_ref),
-        destination: 'Замовлення ' + String(order_ref),
-        comment: products && Array.isArray(products) && products.length
-          ? products.map(p => (p.name || 'Товар') + ' x' + (p.quantity || 1)).join(', ').slice(0, 500)
-          : 'Оплата замовлення'
-      };
-    }
+    monoBody.merchantPaymInfo = {
+      reference: referenceEncoded,
+      destination: 'Замовлення ' + String(order_ref),
+      comment: items.length ? items.map(i => i.n + ' x' + i.q).join(', ').slice(0, 500) : 'Оплата замовлення'
+    };
 
     console.log('Mono invoice/create request:', JSON.stringify({ ...monoBody, merchantPaymInfo: monoBody.merchantPaymInfo }, null, 2));
 
