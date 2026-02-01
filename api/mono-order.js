@@ -52,14 +52,19 @@ module.exports = async (req, res) => {
       return;
     }
 
-    // Checkout API (personal/checkout/order) приймає amount і price в ГРИВНЯХ (документація api.monobank.ua/docs/checkout)
+    // Checkout API (personal/checkout/order): amount і price в ГРИВНЯХ; code_product — число в прикладі (api.monobank.ua/docs/checkout)
     const totalAmountUAH = Math.round(Number(amount) * 100) / 100;
+    if (totalAmountUAH <= 0) {
+      res.status(400).json({ error: 'Сума замовлення має бути більше 0' });
+      return;
+    }
 
     const monoProducts = products.map((p, idx) => {
       const qty = Math.max(1, Math.floor(Number(p.quantity) || 1));
       const lineTotal = Number(p.price) != null ? Number(p.price) : 0;
       const unitPriceUAH = qty > 0 ? Math.round((lineTotal / qty) * 100) / 100 : 0;
-      const codeProduct = p.id != null && p.id !== '' ? String(p.id) : String(idx + 1);
+      const rawId = p.id != null && p.id !== '' ? p.id : idx + 1;
+      const codeProduct = typeof rawId === 'number' || /^\d+$/.test(String(rawId)) ? Number(rawId) : String(rawId);
       return {
         name: String(p.name || 'Товар').slice(0, 256),
         cnt: qty,
@@ -68,7 +73,6 @@ module.exports = async (req, res) => {
       };
     });
 
-    // Mono відхиляє non-HTTPS — підставляємо HTTPS продакшн для return_url
     const siteUrl = (process.env.SITE_URL || 'https://tutsi-shop.com.ua').replace(/\/$/, '');
     const returnUrlIsInvalid = !return_url || !/^https:\/\//i.test(return_url) || /localhost|127\.0\.0\.1/i.test(return_url);
     const pathPart = return_url ? (return_url.replace(/^https?:\/\/[^/]+/i, '') || '/index.html') : '/index.html';
@@ -104,7 +108,9 @@ module.exports = async (req, res) => {
       const errMsg = data.errText || data.errorDescription || data.message || data.errCode || (typeof data === 'object' ? JSON.stringify(data) : data) || 'Mono API error';
       console.error('Mono API error:', response.status, JSON.stringify(data));
       res.status(response.status).json({
-        error: errMsg
+        error: errMsg,
+        errCode: data.errCode,
+        errText: data.errText
       });
       return;
     }
