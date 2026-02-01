@@ -52,20 +52,18 @@ module.exports = async (req, res) => {
       return;
     }
 
-    // Mono Checkout приймає amount і price в КОПІЙКАХ (мінімальні одиниці), не в гривнях
+    // Checkout API (personal/checkout/order) приймає amount і price в ГРИВНЯХ (документація api.monobank.ua/docs/checkout)
     const totalAmountUAH = Math.round(Number(amount) * 100) / 100;
-    const totalAmountKop = Math.round(totalAmountUAH * 100);
 
     const monoProducts = products.map((p, idx) => {
       const qty = Math.max(1, Math.floor(Number(p.quantity) || 1));
       const lineTotal = Number(p.price) != null ? Number(p.price) : 0;
       const unitPriceUAH = qty > 0 ? Math.round((lineTotal / qty) * 100) / 100 : 0;
-      const unitPriceKop = Math.round(unitPriceUAH * 100);
       const codeProduct = p.id != null && p.id !== '' ? String(p.id) : String(idx + 1);
       return {
         name: String(p.name || 'Товар').slice(0, 256),
         cnt: qty,
-        price: unitPriceKop,
+        price: unitPriceUAH,
         code_product: codeProduct
       };
     });
@@ -79,7 +77,7 @@ module.exports = async (req, res) => {
 
     const monoBody = {
       order_ref: String(order_ref),
-      amount: totalAmountKop,
+      amount: totalAmountUAH,
       ccy: 980,
       count: monoProducts.length,
       products: monoProducts,
@@ -103,7 +101,7 @@ module.exports = async (req, res) => {
     const data = await response.json();
 
     if (!response.ok) {
-      const errMsg = data.errorDescription || data.message || data.errCode || (typeof data === 'object' ? JSON.stringify(data) : data) || 'Mono API error';
+      const errMsg = data.errText || data.errorDescription || data.message || data.errCode || (typeof data === 'object' ? JSON.stringify(data) : data) || 'Mono API error';
       console.error('Mono API error:', response.status, JSON.stringify(data));
       res.status(response.status).json({
         error: errMsg
