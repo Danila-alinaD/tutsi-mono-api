@@ -52,22 +52,23 @@ module.exports = async (req, res) => {
       return;
     }
 
-    // Формуємо товари: price = ціна за одиницю (грн), cnt = кількість
+    // Mono Checkout приймає amount і price в КОПІЙКАХ (мінімальні одиниці), не в гривнях
     const totalAmountUAH = Math.round(Number(amount) * 100) / 100;
+    const totalAmountKop = Math.round(totalAmountUAH * 100);
+
     const monoProducts = products.map((p, idx) => {
       const qty = Math.max(1, Math.floor(Number(p.quantity) || 1));
       const lineTotal = Number(p.price) != null ? Number(p.price) : 0;
       const unitPriceUAH = qty > 0 ? Math.round((lineTotal / qty) * 100) / 100 : 0;
+      const unitPriceKop = Math.round(unitPriceUAH * 100);
       const codeProduct = p.id != null && p.id !== '' ? String(p.id) : String(idx + 1);
       return {
         name: String(p.name || 'Товар').slice(0, 256),
         cnt: qty,
-        price: unitPriceUAH,
+        price: unitPriceKop,
         code_product: codeProduct
       };
     });
-
-    const totalQuantity = monoProducts.reduce((sum, p) => sum + p.cnt, 0);
 
     // Mono відхиляє non-HTTPS — підставляємо HTTPS продакшн для return_url
     const siteUrl = (process.env.SITE_URL || 'https://tutsi-shop.com.ua').replace(/\/$/, '');
@@ -76,13 +77,12 @@ module.exports = async (req, res) => {
     const safeReturnUrl = returnUrlIsInvalid ? (siteUrl + (pathPart.startsWith('/') ? pathPart : '/' + pathPart)) : return_url;
     const safeCallbackUrl = (callback_url && /^https:\/\//i.test(callback_url)) ? callback_url : `${siteUrl}/api/mono-callback`;
 
-    // Тіло як у документації Mono: amount і price — числа (грн). Деякі API приймають тільки цілі.
     const monoBody = {
       order_ref: String(order_ref),
-      amount: Number(totalAmountUAH),
+      amount: totalAmountKop,
       ccy: 980,
       count: monoProducts.length,
-      products: monoProducts.map((p) => ({ ...p, price: Number(p.price) })),
+      products: monoProducts,
       dlv_method_list: ['np_brnm'],
       payment_method_list: ['card'],
       callback_url: safeCallbackUrl,
