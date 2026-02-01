@@ -106,8 +106,7 @@ module.exports = async (req, res) => {
       const errMsg = data.errorDescription || data.message || data.errCode || (typeof data === 'object' ? JSON.stringify(data) : data) || 'Mono API error';
       console.error('Mono API error:', response.status, JSON.stringify(data));
       res.status(response.status).json({
-        error: errMsg,
-        hint: 'Перевір у web.monobank.ua → Інтернет → Еквайринг: дозволені домени та URL для return_url/callback_url.'
+        error: errMsg
       });
       return;
     }
