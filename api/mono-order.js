@@ -1,11 +1,11 @@
 /**
- * Ендпоінт для Oplata by Mono (Monobank).
- * Цю папку (mono-vercel) можна задеплоїти на Vercel окремо — тоді основний сайт залишається на своєму хостингу.
+ * Ендпоінт для Інтернет-еквайрингу Monobank (Створення рахунку).
+ * Документація: https://monobank.ua/api-docs/acquiring/methods/ia/post--api--merchant--invoice--create
  *
  * Налаштування:
- * 1. Отримай токен: web.monobank.ua → Інтернет → Управління еквайрингом → Створити токен.
+ * 1. Отримай токен: web.monobank.ua → Інтернет еквайринг → Управління еквайрингом → Створити токен.
  * 2. На Vercel: Project → Settings → Environment Variables → додай MONO_TOKEN = твій токен.
- * 3. У script.js на основному сайті: const MONO_ORDER_URL = 'https://твій-проєкт.vercel.app/api/mono-order';
+ * 3. У script.js: const MONO_ORDER_URL = 'https://твій-проєкт.vercel.app/api/mono-order';
  */
 
 function setCors(res, req) {
@@ -37,63 +37,54 @@ module.exports = async (req, res) => {
     const {
       order_ref,
       amount,
-      name,
-      surname,
-      phone,
-      city,
-      warehouse,
       products,
       return_url,
       callback_url
     } = body;
 
-    if (!order_ref || amount == null || !products || !Array.isArray(products) || !return_url) {
-      res.status(400).json({ error: 'Missing order_ref, amount, products or return_url' });
+    if (!order_ref || amount == null || !return_url) {
+      res.status(400).json({ error: 'Missing order_ref, amount or return_url' });
       return;
     }
 
-    // Checkout API (personal/checkout/order): amount і price в ГРИВНЯХ; code_product — число в прикладі (api.monobank.ua/docs/checkout)
+    // API створення рахунку: amount у КОПІЙКАХ (мінімальні одиниці)
     const totalAmountUAH = Math.round(Number(amount) * 100) / 100;
     if (totalAmountUAH <= 0) {
       res.status(400).json({ error: 'Сума замовлення має бути більше 0' });
       return;
     }
-
-    const monoProducts = products.map((p, idx) => {
-      const qty = Math.max(1, Math.floor(Number(p.quantity) || 1));
-      const lineTotal = Number(p.price) != null ? Number(p.price) : 0;
-      const unitPriceUAH = qty > 0 ? Math.round((lineTotal / qty) * 100) / 100 : 0;
-      const rawId = p.id != null && p.id !== '' ? p.id : idx + 1;
-      const codeProduct = typeof rawId === 'number' || /^\d+$/.test(String(rawId)) ? Number(rawId) : String(rawId);
-      return {
-        name: String(p.name || 'Товар').slice(0, 256),
-        cnt: qty,
-        price: unitPriceUAH,
-        code_product: codeProduct
-      };
-    });
+    const amountKop = Math.round(totalAmountUAH * 100);
 
     const siteUrl = (process.env.SITE_URL || 'https://tutsi-shop.com.ua').replace(/\/$/, '');
     const returnUrlIsInvalid = !return_url || !/^https:\/\//i.test(return_url) || /localhost|127\.0\.0\.1/i.test(return_url);
     const pathPart = return_url ? (return_url.replace(/^https?:\/\/[^/]+/i, '') || '/index.html') : '/index.html';
-    const safeReturnUrl = returnUrlIsInvalid ? (siteUrl + (pathPart.startsWith('/') ? pathPart : '/' + pathPart)) : return_url;
-    const safeCallbackUrl = (callback_url && /^https:\/\//i.test(callback_url)) ? callback_url : `${siteUrl}/api/mono-callback`;
+    const redirectUrl = returnUrlIsInvalid ? (siteUrl + (pathPart.startsWith('/') ? pathPart : '/' + pathPart)) : return_url;
+    const webHookUrl = (callback_url && /^https:\/\//i.test(callback_url)) ? callback_url : `${siteUrl}/api/mono-callback`;
 
+    // Згідно документації: amount (копійки), ccy, redirectUrl, webHookUrl
     const monoBody = {
-      order_ref: String(order_ref),
-      amount: totalAmountUAH,
+      amount: amountKop,
       ccy: 980,
-      count: monoProducts.length,
-      products: monoProducts,
-      dlv_method_list: ['np_brnm'],
-      payment_method_list: ['card'],
-      callback_url: safeCallbackUrl,
-      return_url: safeReturnUrl
+      redirectUrl,
+      webHookUrl,
+      validity: 86400,
+      paymentType: 'debit'
     };
 
-    console.log('Mono request body:', JSON.stringify(monoBody, null, 2));
+    // merchantPaymInfo — опційно, для відображення на сторінці оплати (reference, destination)
+    if (order_ref) {
+      monoBody.merchantPaymInfo = {
+        reference: String(order_ref),
+        destination: 'Замовлення ' + String(order_ref),
+        comment: products && Array.isArray(products) && products.length
+          ? products.map(p => (p.name || 'Товар') + ' x' + (p.quantity || 1)).join(', ').slice(0, 500)
+          : 'Оплата замовлення'
+      };
+    }
 
-    const response = await fetch('https://api.monobank.ua/personal/checkout/order', {
+    console.log('Mono invoice/create request:', JSON.stringify({ ...monoBody, merchantPaymInfo: monoBody.merchantPaymInfo }, null, 2));
+
+    const response = await fetch('https://api.monobank.ua/api/merchant/invoice/create', {
       method: 'POST',
       headers: {
         'X-Token': MONO_TOKEN,
@@ -115,12 +106,13 @@ module.exports = async (req, res) => {
       return;
     }
 
-    if (data.result && data.result.redirect_url) {
-      res.status(200).json({ redirect_url: data.result.redirect_url });
+    // Відповідь: invoiceId, pageUrl (посилання на оплату)
+    if (data.pageUrl) {
+      res.status(200).json({ redirect_url: data.pageUrl, invoiceId: data.invoiceId });
       return;
     }
 
-    res.status(500).json({ error: 'No redirect_url in Mono response' });
+    res.status(500).json({ error: 'No pageUrl in Mono response' });
   } catch (e) {
     console.error('mono-order error:', e);
     res.status(500).json({ error: e.message || 'Server error' });
